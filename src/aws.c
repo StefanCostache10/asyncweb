@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,32 +16,26 @@
 #include <errno.h>
 #include <sys/sendfile.h>
 #include <sys/eventfd.h>
-
 #include "aws.h"
 #include "utils/util.h"
 #include "utils/debug.h"
 #include "utils/sock_util.h"
 #include "utils/w_epoll.h"
-
 /* Definim constanta local, deoarece lipseste din aws.h */
 #define AWS_IO_MAX_EVENTS 128
-
 static int listenfd;
 static int epollfd;
 static int async_eventfd;
 static io_context_t ctx;
-
 /* --- Helpers --- */
-
 struct connection *connection_create(int sockfd)
 {
 	struct connection *conn = malloc(sizeof(*conn));
-	DIE(conn == NULL, "malloc");
 
+	DIE(conn == NULL, "malloc");
 	conn->sockfd = sockfd;
 	memset(conn->recv_buffer, 0, BUFSIZ);
 	memset(conn->send_buffer, 0, BUFSIZ);
-
 	conn->state = STATE_INITIAL;
 	conn->fd = -1;
 	conn->recv_len = 0;
@@ -49,14 +45,12 @@ struct connection *connection_create(int sockfd)
 	conn->file_size = 0;
 	conn->have_path = 0;
 	conn->async_read_len = 0;
-
 	conn->ctx = ctx;
 	conn->eventfd = async_eventfd;
-
 	return conn;
 }
-
-void connection_remove(struct connection *conn) {
+void connection_remove(struct connection *conn)
+{
 	if (conn->fd != -1) {
 		close(conn->fd);
 		conn->fd = -1;
@@ -68,7 +62,8 @@ void connection_remove(struct connection *conn) {
 	free(conn);
 }
 
-int aws_on_path_cb(http_parser *p, const char *buf, size_t len) {
+int aws_on_path_cb(http_parser *p, const char *buf, size_t len)
+{
 	struct connection *conn = (struct connection *)p->data;
 
 	memcpy(conn->request_path, buf, len);
@@ -78,7 +73,8 @@ int aws_on_path_cb(http_parser *p, const char *buf, size_t len) {
 	return 0;
 }
 
-enum resource_type connection_get_resource_type(struct connection *conn) {
+enum resource_type connection_get_resource_type(struct connection *conn)
+{
 	if (strstr(conn->request_path, AWS_REL_STATIC_FOLDER) == conn->request_path + 1)
 		return RESOURCE_TYPE_STATIC;
 	if (strstr(conn->request_path, AWS_REL_DYNAMIC_FOLDER) == conn->request_path + 1)
@@ -88,7 +84,8 @@ enum resource_type connection_get_resource_type(struct connection *conn) {
 
 /* --- Logică Acceptare --- */
 
-void handle_new_connection(void) {
+void handle_new_connection(void)
+{
 	static int sockfd;
 	socklen_t addrlen = sizeof(struct sockaddr_in);
 	struct sockaddr_in addr;
@@ -98,7 +95,8 @@ void handle_new_connection(void) {
 
 	sockfd = accept(listenfd, (struct sockaddr *)&addr, &addrlen);
 	if (sockfd < 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK) return;
+		if (errno == EAGAIN || errno == EWOULDBLOCK)
+			return;
 		ERR("accept");
 		return;
 	}
@@ -122,7 +120,8 @@ void handle_new_connection(void) {
 
 /* --- Receive & Parse --- */
 
-void receive_data(struct connection *conn) {
+void receive_data(struct connection *conn)
+{
 	ssize_t bytes_recv;
 
 	bytes_recv = recv(conn->sockfd,
@@ -130,9 +129,8 @@ void receive_data(struct connection *conn) {
 					  BUFSIZ - conn->recv_len, 0);
 
 	if (bytes_recv < 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK) {
+		if (errno == EAGAIN || errno == EWOULDBLOCK)
 			return;
-		}
 		conn->state = STATE_CONNECTION_CLOSED;
 		return;
 	}
@@ -146,7 +144,8 @@ void receive_data(struct connection *conn) {
 	conn->state = STATE_RECEIVING_DATA;
 }
 
-int parse_header(struct connection *conn) {
+int parse_header(struct connection *conn)
+{
 	http_parser_settings settings_on_path = {
 		.on_message_begin = 0,
 		.on_header_field = 0,
@@ -170,14 +169,14 @@ int parse_header(struct connection *conn) {
 									   conn->recv_len);
 	(void)bytes_parsed;
 
-	if (conn->have_path) {
+	if (conn->have_path)
 		return 0;
-	}
 
 	return -1;
 }
 
-int connection_open_file(struct connection *conn) {
+int connection_open_file(struct connection *conn)
+{
 	char filepath[BUFSIZ];
 	struct stat st;
 	int rc;
@@ -209,7 +208,9 @@ int connection_open_file(struct connection *conn) {
 
 /* --- Logică Trimitere Helper --- */
 
-void connection_prepare_send_reply_header(struct connection *conn) {
+
+void connection_prepare_send_reply_header(struct connection *conn)
+{
 	sprintf(conn->send_buffer,
 		"HTTP/1.0 200 OK\r\n"
 		"Date: Sun, 01 Jan 2025 00:00:00 GMT\r\n"
@@ -222,7 +223,8 @@ void connection_prepare_send_reply_header(struct connection *conn) {
 	conn->send_pos = 0;
 }
 
-void connection_prepare_send_404(struct connection *conn) {
+void connection_prepare_send_404(struct connection *conn)
+{
 	sprintf(conn->send_buffer,
 		"HTTP/1.0 404 Not Found\r\n"
 		"Content-Length: 0\r\n"
@@ -232,7 +234,8 @@ void connection_prepare_send_404(struct connection *conn) {
 	conn->send_pos = 0;
 }
 
-enum connection_state connection_send_msg_buffer(struct connection *conn) {
+enum connection_state connection_send_msg_buffer(struct connection *conn)
+{
 	ssize_t bytes_sent;
 
 	while (conn->send_pos < conn->send_len) {
@@ -241,16 +244,13 @@ enum connection_state connection_send_msg_buffer(struct connection *conn) {
 						  conn->send_len - conn->send_pos,
 						  0);
 		if (bytes_sent < 0) {
-			if (errno == EAGAIN || errno == EWOULDBLOCK) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK)
 				return conn->state;
-			}
 			return STATE_CONNECTION_CLOSED;
 		}
 
-		if (bytes_sent == 0) {
+		if (bytes_sent == 0)
 			return STATE_CONNECTION_CLOSED;
-		}
-
 		conn->send_pos += bytes_sent;
 	}
 
@@ -261,7 +261,8 @@ enum connection_state connection_send_msg_buffer(struct connection *conn) {
 
 /* --- Implementare Async --- */
 
-void connection_start_async_io(struct connection *conn) {
+void connection_start_async_io(struct connection *conn)
+{
 	if (conn->file_pos >= conn->file_size) {
 		conn->state = STATE_DATA_SENT;
 		return;
@@ -269,10 +270,9 @@ void connection_start_async_io(struct connection *conn) {
 
 	/* Calculam cat citim: maxim BUFSIZ sau cat a ramas */
 	size_t len_to_read = BUFSIZ;
-	if (conn->file_size - conn->file_pos < BUFSIZ) {
-		len_to_read = conn->file_size - conn->file_pos;
-	}
 
+	if (conn->file_size - conn->file_pos < BUFSIZ)
+		len_to_read = conn->file_size - conn->file_pos;
 	io_prep_pread(&conn->iocb, conn->fd, conn->send_buffer, len_to_read, conn->file_pos);
 	conn->iocb.data = conn;
 	io_set_eventfd(&conn->iocb, async_eventfd);
@@ -284,13 +284,11 @@ void connection_start_async_io(struct connection *conn) {
 	}
 
 	conn->state = STATE_ASYNC_ONGOING;
-	/* CRUCIAL: Scoatem EPOLLOUT de pe socket cat asteptam discul!
-	   Daca nu facem asta, epoll_wait va returna imediat (busy wait) 
-	   pentru ca socketul e liber la scriere. */
 	w_epoll_update_ptr_in(epollfd, conn->sockfd, conn);
 }
 
-void connection_complete_async_io(struct connection *conn) {
+void connection_complete_async_io(struct connection *conn)
+{
 	conn->file_pos += conn->async_read_len;
 	conn->send_len = conn->async_read_len;
 	conn->send_pos = 0;
@@ -300,7 +298,8 @@ void connection_complete_async_io(struct connection *conn) {
 	w_epoll_update_ptr_inout(epollfd, conn->sockfd, conn);
 }
 
-int connection_send_dynamic(struct connection *conn) {
+int connection_send_dynamic(struct connection *conn)
+{
 	enum connection_state ret_state;
 
 	/* Trimitem ce e in buffer */
@@ -326,19 +325,20 @@ int connection_send_dynamic(struct connection *conn) {
 	return 0;
 }
 
-enum connection_state connection_send_static(struct connection *conn) {
+enum connection_state connection_send_static(struct connection *conn)
+{
 	ssize_t bytes_sent;
 
 	while (conn->file_pos < conn->file_size) {
 		off_t offset = conn->file_pos;
+
 		bytes_sent = sendfile(conn->sockfd, conn->fd, &offset,
 							  conn->file_size - conn->file_pos);
 		conn->file_pos = offset;
 
 		if (bytes_sent < 0) {
-			if (errno == EAGAIN || errno == EWOULDBLOCK) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK)
 				return STATE_SENDING_DATA;
-			}
 			return STATE_CONNECTION_CLOSED;
 		}
 
@@ -356,23 +356,23 @@ enum connection_state connection_send_static(struct connection *conn) {
 	return STATE_SENDING_DATA;
 }
 
-void handle_async_events(void) {
+void handle_async_events(void)
+{
 	uint64_t val;
 	int rc, i;
 	struct io_event events[8];
 
 	/* Consumam notificarea din eventfd */
 	rc = read(async_eventfd, &val, sizeof(val));
-	if (rc < 0) return;
+	if (rc < 0)
+		return;
 
-	/* val ne spune CÂTE evenimente sunt gata. Trebuie să le procesăm pe toate! */
 	size_t processed = 0;
+
 	while (processed < val) {
-		/* Calculăm câte cerem: maxim 8 sau câte au mai rămas */
 		int to_get = (val - processed > 8) ? 8 : (val - processed);
-		/* Setăm min_nr la to_get pentru a fi siguri că le luăm */
+
 		rc = io_getevents(ctx, to_get, 8, events, NULL);
-		/* Safety check */
 		if (rc < 0) {
 			ERR("io_getevents failed");
 			break;
@@ -380,6 +380,7 @@ void handle_async_events(void) {
 
 		for (i = 0; i < rc; i++) {
 			struct connection *conn = (struct connection *)events[i].data;
+
 			if ((long)events[i].res < 0) {
 				conn->state = STATE_CONNECTION_CLOSED;
 				connection_remove(conn);
@@ -395,10 +396,10 @@ void handle_async_events(void) {
 
 /* --- Handlers Main --- */
 
-void handle_input(struct connection *conn) {
+void handle_input(struct connection *conn)
+{
 	int rc;
-	/* 1. STATE CHECK: Dacă deja trimitem ceva (Header, Body, 404), 
-	   ignorăm datele noi ca să nu resetăm transferul. */
+
 	if (conn->state != STATE_INITIAL && conn->state != STATE_RECEIVING_DATA)
 		return;
 
@@ -406,9 +407,7 @@ void handle_input(struct connection *conn) {
 	if (conn->state == STATE_CONNECTION_CLOSED)
 		goto remove;
 
-	/* 2. COMPLETENESS CHECK: Verificăm dacă avem finalul headerelor (\r\n\r\n).
-	   Dacă nu, înseamnă că cererea e parțială (ex: "GET /sta") și trebuie să 
-	   mai așteptăm date. Altfel riscăm să deschidem un path greșit -> 404. */
+
 	if (strstr(conn->recv_buffer, "\r\n\r\n") == NULL)
 		return;
 
@@ -464,17 +463,16 @@ void handle_output(struct connection *conn)
 	} else if (conn->state == STATE_SENDING_DATA) {
 		if (conn->res_type == RESOURCE_TYPE_STATIC)
 			conn->state = connection_send_static(conn);
-		else if (conn->res_type == RESOURCE_TYPE_DYNAMIC) 
+		else if (conn->res_type == RESOURCE_TYPE_DYNAMIC)
 			connection_send_dynamic(conn);
-		if (conn->state == STATE_CONNECTION_CLOSED)
+		if (conn->state == STATE_CONNECTION_CLOSED) {
 			connection_remove(conn);
 			return;
-		
+		}
 	}
 
 	if (conn->state == STATE_DATA_SENT || conn->state == STATE_404_SENT)
 		connection_remove(conn);
-	
 }
 
 void handle_client(uint32_t event, struct connection *conn)
@@ -487,14 +485,14 @@ void handle_client(uint32_t event, struct connection *conn)
 
 	if (event & EPOLLIN)
 		handle_input(conn);
-	
+
 	/* Verificam daca conexiunea mai e valida inainte de output */
 	if (conn->state != STATE_CONNECTION_CLOSED && (event & EPOLLOUT))
 		handle_output(conn);
-	
 }
 
-int main(void) {
+int main(void)
+{
 	int rc;
 
 	ctx = 0;
@@ -537,3 +535,4 @@ int main(void) {
 
 	return 0;
 }
+
